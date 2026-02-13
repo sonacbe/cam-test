@@ -2,33 +2,25 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>얼굴 인식 테스트</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>얼굴 인식 v0.3</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.10.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-detection@1.0.2"></script>
     <style>
-        body { margin: 0; background: #222; color: white; font-family: sans-serif; overflow: hidden; }
-        .container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
-        
-        /* 비디오와 캔버스를 겹치게 설정 */
-        video { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-        canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; z-index: 2; pointer-events: none; }
-        
-        #status { 
-            position: fixed; top: 0; left: 0; width: 100%; background: rgba(0,0,0,0.7); 
-            color: #0f0; padding: 10px; font-size: 12px; z-index: 10; word-break: break-all;
-        }
+        body { margin: 0; background: #000; overflow: hidden; position: fixed; width: 100%; height: 100%; }
+        /* 비디오를 화면에 꽉 채우되 비율 유지 */
+        video { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: contain; z-index: 1; }
+        /* 캔버스를 비디오와 완전히 동일한 위치/크기로 설정 */
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: contain; z-index: 2; pointer-events: none; }
+        #status { position: fixed; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.6); padding: 8px; z-index: 10; font-size: 14px; border-radius: 5px; }
     </style>
 </head>
 <body>
-
-    <div id="status">상태: 라이브러리 로딩 중...</div>
-    <div class="container">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-    </div>
+    <div id="status">상태: 준비 중...</div>
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
 
     <script>
         const video = document.getElementById('video');
@@ -36,67 +28,57 @@
         const ctx = canvas.getContext('2d');
         const statusLabel = document.getElementById('status');
 
-        function log(msg) {
-            statusLabel.innerText = "상태: " + msg;
-            console.log(msg);
-        }
-
-        async function setupCamera() {
+        async function setup() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: "user" },
                     audio: false
                 });
                 video.srcObject = stream;
-                return new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        // 캔버스 크기를 비디오 실제 해상도에 맞춤
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                        resolve(video);
-                    };
-                });
-            } catch (e) {
-                log("카메라 접근 에러: " + e.message);
-            }
-        }
-
-        async function main() {
-            try {
-                log("모델 로딩 중... (시간이 걸릴 수 있습니다)");
-                const model = faceDetection.SupportedModels.MediaPipeFaceDetector;
-                const detectorConfig = { runtime: 'tfjs', modelType: 'short' };
-                const detector = await faceDetection.createDetector(model, detectorConfig);
                 
-                log("모델 로드 완료! 인식 시작...");
+                statusLabel.innerText = "모델 로딩 중...";
+                const model = faceDetection.SupportedModels.MediaPipeFaceDetector;
+                const detector = await faceDetection.createDetector(model, { runtime: 'tfjs', modelType: 'short' });
+                
+                statusLabel.innerText = "인식 시작!";
 
-                async function render() {
-                    if (video.readyState === 4) { // 비디오 데이터가 준비되었을 때만 실행
-                        const faces = await detector.estimateFaces(video);
-                        
-                        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-                        if (faces.length > 0) {
-                            log(`인식 중: ${faces.length}명 감지됨`);
-                            faces.forEach(face => {
-                                const { xMin, yMin, width, height } = face.box;
-                                ctx.strokeStyle = "#00FF00";
-                                ctx.lineWidth = 5;
-                                ctx.strokeRect(xMin, yMin, width, height);
-                            });
-                        } else {
-                            // 얼굴이 안 보일 때의 로그가 너무 빠르면 성능에 영향을 주므로 생략 가능
+                function render() {
+                    if (video.readyState === 4) {
+                        // 1. 캔버스 해상도를 비디오 원본 해상도와 일치시킴 (중요)
+                        if (canvas.width !== video.videoWidth) {
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
                         }
+
+                        detector.estimateFaces(video).then(faces => {
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            
+                            if (faces.length > 0) {
+                                statusLabel.innerText = `${faces.length}명 감지됨`;
+                                faces.forEach(face => {
+                                    const { xMin, yMin, width, height } = face.box;
+                                    
+                                    // 박스 그리기
+                                    ctx.strokeStyle = "#00FF00";
+                                    ctx.lineWidth = Math.max(4, canvas.width / 100); // 해상도에 따른 선 굵기 조절
+                                    ctx.strokeRect(xMin, yMin, width, height);
+                                    
+                                    // 텍스트 추가 (인식 확인용)
+                                    ctx.fillStyle = "#00FF00";
+                                    ctx.font = `${Math.max(16, canvas.width / 30)}px Arial`;
+                                    ctx.fillText("Face", xMin, yMin > 20 ? yMin - 10 : 20);
+                                });
+                            }
+                        });
                     }
                     requestAnimationFrame(render);
                 }
                 render();
             } catch (e) {
-                log("오류 발생: " + e.message);
+                statusLabel.innerText = "에러: " + e.message;
             }
         }
-
-        setupCamera().then(main);
+        setup();
     </script>
 </body>
 </html>
