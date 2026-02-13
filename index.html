@@ -3,230 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Face Detection v0.8</title>
+    <title>Face Detection v0.9</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 
     <style>
         body {
-            margin: 0;
-            padding: 0;
-            background-color: #111;
+            margin: 0; padding: 0;
+            background-color: #000;
             overflow: hidden;
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-family: sans-serif;
-            color: white;
+            width: 100vw; height: 100vh;
+            display: flex; justify-content: center; align-items: center;
+            font-family: sans-serif; color: white;
         }
 
-        #input_video { display: none; }
+        video { display: none; }
 
-        #output_canvas {
-            position: absolute;
-            top: 0; left: 0;
+        canvas {
+            position: absolute; top: 0; left: 0;
             width: 100%; height: 100%;
             object-fit: cover;
-            z-index: 1;
         }
 
-        /* 시작 버튼 및 안내 컨테이너 */
+        /* 시작 화면 UI */
         .start-container {
-            z-index: 10;
-            text-align: center;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 30px;
-            border-radius: 16px;
-            max-width: 80%;
+            z-index: 20; position: relative;
+            text-align: center; background: rgba(0,0,0,0.85);
+            padding: 40px; border-radius: 20px;
+            width: 80%; max-width: 400px;
         }
 
-        button#startBtn {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            font-size: 1.2rem;
-            border-radius: 50px;
-            cursor: pointer;
-            font-weight: bold;
-            box-shadow: 0 4px 15px rgba(0,123,255,0.4);
-            transition: transform 0.2s;
+        button {
+            background: #007bff; color: white; border: none;
+            padding: 15px 30px; font-size: 1.2rem;
+            border-radius: 50px; cursor: pointer; font-weight: bold;
+            margin-top: 20px; width: 100%;
         }
-        button#startBtn:active { transform: scale(0.95); }
+        button:disabled { background: #555; cursor: not-allowed; }
 
-        .error-msg {
-            color: #ff4444;
-            margin-top: 15px;
-            font-size: 0.9rem;
-            white-space: pre-wrap;
+        /* 정보 오버레이 */
+        .overlay {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 12px; border-radius: 8px;
+            z-index: 10; display: none; pointer-events: none;
         }
-
-        .env-info {
-            color: #aaa;
-            margin-bottom: 20px;
-            font-size: 0.85rem;
-        }
-
-        /* 오버레이 패널 (영상 위에 뜸) */
-        .overlay-panel {
-            position: absolute;
-            top: 20px; left: 20px;
-            background: rgba(0, 0, 0, 0.5);
-            padding: 10px 15px;
-            border-radius: 8px;
-            z-index: 5;
-            display: none; /* 시작 전엔 숨김 */
-        }
+        .status-text { color: #00ff00; font-weight: bold; font-size: 0.9rem; }
+        .fps-text { color: #aaa; font-size: 0.8rem; margin-top: 4px; }
     </style>
 </head>
 <body>
 
     <div class="start-container" id="startScreen">
-        <h2>📷 Face Detection v0.8</h2>
-        <div class="env-info" id="envInfo">환경 확인 중...</div>
-        <button id="startBtn">카메라 시작하기</button>
-        <div class="error-msg" id="errorMsg"></div>
+        <h2>📷 Face v0.9</h2>
+        <p style="color:#ccc; font-size:0.9rem;">
+            끊김 없는 인식 모드<br>
+            (반드시 HTTPS 환경 필요)
+        </p>
+        <button id="startBtn">카메라 켜기</button>
+        <p id="errorMsg" style="color:#ff4444; font-size:0.8rem; margin-top:15px; white-space:pre-line;"></p>
     </div>
 
-    <div class="overlay-panel" id="overlay">
-        <div id="statusInfo" style="font-size:0.9rem;">초기화 중...</div>
+    <div class="overlay" id="overlay">
+        <div class="status-text" id="statusText">초기화 중...</div>
+        <div class="fps-text" id="debugText"></div>
     </div>
 
     <video id="input_video" playsinline webkit-playsinline></video>
-    <canvas id="output_canvas"></canvas>
-
-    <script>
-        const videoElement = document.getElementById('input_video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const startBtn = document.getElementById('startBtn');
-        const startScreen = document.getElementById('startScreen');
-        const errorMsg = document.getElementById('errorMsg');
-        const envInfo = document.getElementById('envInfo');
-        const overlay = document.getElementById('overlay');
-        const statusInfo = document.getElementById('statusInfo');
-
-        // 1. 환경 진단 (HTTPS 여부 확인)
-        function checkEnvironment() {
-            const isSecure = window.isSecureContext;
-            const protocol = location.protocol;
-            const hostname = location.hostname;
-
-            let msg = `현재 주소: ${protocol}//${hostname}\n`;
-            
-            if (!isSecure && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-                msg += "⚠️ 주의: HTTPS가 아닙니다. 카메라 권한이 차단될 수 있습니다.";
-                envInfo.style.color = "#ffaa00";
-            } else {
-                msg += "✅ 보안 컨텍스트(Secure Context) 확인됨.";
-                envInfo.style.color = "#00ff00";
-            }
-            envInfo.innerText = msg;
-        }
-        checkEnvironment();
-
-        // 2. 화면 크기 조정
-        function resizeCanvas() {
-            canvasElement.width = window.innerWidth;
-            canvasElement.height = window.innerHeight;
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
-
-        // 3. MediaPipe 설정
-        const faceDetection = new FaceDetection({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`;
-        }});
-        faceDetection.setOptions({ model: 'short', minDetectionConfidence: 0.5 });
-        faceDetection.onResults(onResults);
-
-        // 4. 결과 그리기 함수
-        function onResults(results) {
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-            // 영상 비율에 맞춰 그리기 (object-fit: cover 구현)
-            const imgAspect = results.image.width / results.image.height;
-            const canvasAspect = canvasElement.width / canvasElement.height;
-            let drawW, drawH, offX, offY;
-
-            if (imgAspect < canvasAspect) {
-                drawW = canvasElement.width;
-                drawH = canvasElement.width / imgAspect;
-                offX = 0;
-                offY = (canvasElement.height - drawH) / 2;
-            } else {
-                drawH = canvasElement.height;
-                drawW = canvasElement.height * imgAspect;
-                offX = (canvasElement.width - drawW) / 2;
-                offY = 0;
-            }
-
-            canvasCtx.drawImage(results.image, offX, offY, drawW, drawH);
-
-            if (results.detections.length > 0) {
-                statusInfo.innerText = `감지됨: ${results.detections.length}명`;
-                for (const detection of results.detections) {
-                    const bbox = detection.boundingBox;
-                    const x = offX + (bbox.xCenter * drawW) - (bbox.width * drawW / 2);
-                    const y = offY + (bbox.yCenter * drawHeight) - (bbox.height * drawH / 2); // 여기 오타 수정 (drawHeight -> drawH)
-                    const w = bbox.width * drawW;
-                    const h = bbox.height * drawH;
-
-                    canvasCtx.strokeStyle = "#00FF00";
-                    canvasCtx.lineWidth = 4;
-                    canvasCtx.strokeRect(x, y, w, h);
-                }
-            } else {
-                statusInfo.innerText = "얼굴 찾는 중...";
-            }
-            canvasCtx.restore();
-        }
-
-        // 5. 카메라 시작 (버튼 클릭 시 실행)
-        startBtn.onclick = async () => {
-            startBtn.disabled = true;
-            startBtn.innerText = "연결 중...";
-            errorMsg.innerText = "";
-
-            try {
-                // 권한 요청
-                const constraints = { video: { facingMode: 'user', width: 1280, height: 720 }, audio: false };
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                
-                // 성공 시 UI 전환
-                videoElement.srcObject = stream;
-                videoElement.onloadedmetadata = () => {
-                    videoElement.play();
-                    startScreen.style.display = 'none'; // 시작 화면 숨김
-                    overlay.style.display = 'block';    // 오버레이 표시
-                    loop(); // 분석 루프 시작
-                };
-
-            } catch (err) {
-                console.error(err);
-                startBtn.disabled = false;
-                startBtn.innerText = "다시 시도";
-                
-                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                    errorMsg.innerText = "❌ 카메라 권한이 거부되었습니다.\n브라우저 설정에서 권한을 초기화해주세요.";
-                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-                    errorMsg.innerText = "❌ 카메라를 찾을 수 없습니다.";
-                } else {
-                    errorMsg.innerText = `❌ 오류 발생: ${err.name}\n${err.message}`;
-                }
-            }
-        };
-
-        async function loop() {
-            if (!videoElement.paused && !videoElement.ended) {
-                await faceDetection.send({image: videoElement});
-                requestAnimationFrame(loop);
-            }
-        }
-    </script>
-</body>
-</html>
+    <canvas id="output_canvas"></
