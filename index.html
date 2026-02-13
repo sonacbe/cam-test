@@ -3,99 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>얼굴 인식 v0.4</title>
+    <title>좌표 0 에러 해결 버전</title>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.10.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.10.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.10.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-detection@1.0.2"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; position: fixed; width: 100%; height: 100%; }
-        /* 비디오와 캔버스를 화면 중앙에 배치 */
-        video, canvas { 
-            position: absolute; top: 0; left: 0; 
-            width: 100vw; height: 100vh; 
-            object-fit: contain; 
-        }
-        video { z-index: 1; }
-        canvas { z-index: 2; pointer-events: none; } /* 캔버스가 위에 와야 함 */
-        
-        #status { 
-            position: fixed; top: 10px; left: 10px; right: 10px;
-            color: #fff; background: rgba(255, 0, 0, 0.7); 
-            padding: 10px; z-index: 10; font-family: monospace; font-size: 12px;
-            border-radius: 5px; line-height: 1.4;
-        }
+        body { margin: 0; background: #000; overflow: hidden; font-family: monospace; }
+        #container { position: relative; width: 100vw; height: 100vh; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 10; pointer-events: none; }
+        #debug { position: fixed; top: 0; left: 0; right: 0; background: rgba(0,0,255,0.8); color: white; padding: 10px; z-index: 100; font-size: 11px; }
     </style>
 </head>
 <body>
-    <div id="status">상태: 시스템 시작 중...</div>
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
+    <div id="debug">상태 확인 중...</div>
+    <div id="container">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
 
     <script>
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
-        const statusLabel = document.getElementById('status');
+        const debug = document.getElementById('debug');
 
         async function init() {
             try {
+                // 1. 백엔드 설정 (WebGL 우선, 안되면 CPU)
+                await tf.setBackend('webgl');
+                debug.innerText = "카메라 연결 중...";
+
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "user" },
+                    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
                     audio: false
                 });
                 video.srcObject = stream;
-                
-                statusLabel.innerText = "모델 로드 중...";
-                const model = faceDetection.SupportedModels.MediaPipeFaceDetector;
-                const detector = await faceDetection.createDetector(model, { runtime: 'tfjs', modelType: 'short' });
-                
-                statusLabel.innerText = "카메라 대기 중...";
 
-                function detect() {
-                    if (video.readyState === 4) {
-                        // 해상도 동기화
+                // 2. 모델 로드 (최대한 가벼운 설정)
+                const detector = await faceDetection.createDetector(
+                    faceDetection.SupportedModels.MediaPipeFaceDetector,
+                    { runtime: 'tfjs', modelType: 'short' }
+                );
+
+                async function loop() {
+                    // 비디오 데이터가 유효한지(0이 아닌지) 체크
+                    if (video.readyState === 4 && video.videoWidth > 0) {
+                        
                         if (canvas.width !== video.videoWidth) {
                             canvas.width = video.videoWidth;
                             canvas.height = video.videoHeight;
                         }
 
-                        detector.estimateFaces(video).then(faces => {
-                            ctx.clearRect(0, 0, canvas.width, canvas.height);
-                            
-                            if (faces.length > 0) {
-                                const face = faces[0];
-                                const { xMin, yMin, width, height } = face.box;
+                        const faces = await detector.estimateFaces(video, { flipHorizontal: false });
 
-                                // 1. 상단에 좌표값 출력
-                                statusLabel.innerHTML = `
-                                    <b>[감지 성공]</b><br>
-                                    좌표 - X: ${Math.round(xMin)}, Y: ${Math.round(yMin)}<br>
-                                    크기 - W: ${Math.round(width)}, H: ${Math.round(height)}<br>
-                                    캔버스 크기: ${canvas.width}x${canvas.height}
-                                `;
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                                // 2. 박스 그리기 (색상을 더 눈에 띄게 변경)
-                                ctx.strokeStyle = "red"; 
-                                ctx.lineWidth = 10; // 아주 굵게 설정
-                                ctx.strokeRect(xMin, yMin, width, height);
+                        if (faces && faces.length > 0) {
+                            const face = faces[0];
+                            const box = face.box;
 
-                                // 3. 테스트용 점 (좌측 상단 인식 확인용)
-                                ctx.fillStyle = "yellow";
-                                ctx.fillRect(xMin, yMin, 20, 20);
-                                
+                            // 좌표가 모두 0인 경우에 대한 대응
+                            if (box.width === 0 && box.height === 0) {
+                                debug.innerText = "데이터 오류: 좌표가 0으로 수신됨 (재시도 중)";
                             } else {
-                                statusLabel.innerText = "얼굴을 찾는 중...";
+                                debug.innerHTML = `감지됨! X:${Math.round(box.xMin)} Y:${Math.round(box.yMin)}<br>W:${Math.round(box.width)} H:${Math.round(box.height)}`;
+                                
+                                // 박스 그리기
+                                ctx.strokeStyle = "#00FF00";
+                                ctx.lineWidth = 6;
+                                ctx.strokeRect(box.xMin, box.yMin, box.width, box.height);
                             }
-                        });
+                        } else {
+                            debug.innerText = "얼굴을 찾는 중... (비디오 크기: " + video.videoWidth + "x" + video.videoHeight + ")";
+                        }
                     }
-                    requestAnimationFrame(detect);
+                    requestAnimationFrame(loop);
                 }
-                detect();
-            } catch (e) {
-                statusLabel.innerText = "에러 발생: " + e.message;
+                loop();
+            } catch (err) {
+                debug.innerText = "에러: " + err.message;
             }
         }
+
         init();
     </script>
 </body>
